@@ -1,0 +1,4 @@
+<resources>
+    <string name="app_name">SleepWisePOC</string>
+    <string name="health_permissions_rationale">SleepWise needs access to your health data (heart rate, HRV, sleep sessions) from your Galaxy Watch to analyze sleep stages and trigger smart wake-up alarms.</string>
+</resources>
