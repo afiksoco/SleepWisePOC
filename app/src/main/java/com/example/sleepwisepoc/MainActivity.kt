@@ -21,20 +21,28 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.sleepwisepoc.ui.theme.SleepWisePOCTheme
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 class MainActivity : ComponentActivity() {
 
     private var samsungHealthManager: SamsungHealthManager? = null
-    private val sleepPredictor = SleepPredictor()
+    private var tfLitePredictor: TFLiteSleepPredictor? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
 
-        // Try to initialize Samsung Health SDK
+        // Initialize Samsung Health SDK
         samsungHealthManager = SamsungHealthManager(this)
         val sdkInitialized = samsungHealthManager?.initialize() ?: false
+
+        // Initialize TFLite predictor
+        tfLitePredictor = TFLiteSleepPredictor(this)
+        val tfliteInitialized = tfLitePredictor?.initialize() ?: false
+
+        Log.d("MainActivity", "Samsung Health SDK: $sdkInitialized, TFLite: $tfliteInitialized")
 
         setContent {
             SleepWisePOCTheme {
@@ -43,11 +51,16 @@ class MainActivity : ComponentActivity() {
                         modifier = Modifier.padding(innerPadding),
                         activity = this,
                         samsungHealthManager = if (sdkInitialized) samsungHealthManager else null,
-                        sleepPredictor = sleepPredictor
+                        tfLitePredictor = if (tfliteInitialized) tfLitePredictor else null
                     )
                 }
             }
         }
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        tfLitePredictor?.close()
     }
 }
 
@@ -56,13 +69,14 @@ fun SleepWisePOCApp(
     modifier: Modifier = Modifier,
     activity: Activity,
     samsungHealthManager: SamsungHealthManager?,
-    sleepPredictor: SleepPredictor
+    tfLitePredictor: TFLiteSleepPredictor?
 ) {
     val scope = rememberCoroutineScope()
 
-    var currentInput by remember { mutableStateOf<SleepPredictor.PredictionInput?>(null) }
-    var predictionResult by remember { mutableStateOf<SleepPredictor.PredictionResult?>(null) }
-    var statusMessage by remember { mutableStateOf("Select a scenario to demo") }
+    var predictionResult by remember { mutableStateOf<TFLiteSleepPredictor.SleepPrediction?>(null) }
+    var statusMessage by remember { mutableStateOf("TFLite LSTM Model Ready") }
+    var isLoading by remember { mutableStateOf(false) }
+    var bufferStatus by remember { mutableStateOf("Buffer: 0/10 epochs") }
     var realHealthData by remember { mutableStateOf("") }
 
     Column(
@@ -79,12 +93,39 @@ fun SleepWisePOCApp(
             fontWeight = FontWeight.Bold
         )
         Text(
-            text = "Smart Wake-Up Demo",
+            text = "LSTM Neural Network Demo",
             fontSize = 16.sp,
             color = Color.Gray
         )
 
-        Spacer(modifier = Modifier.height(20.dp))
+        Spacer(modifier = Modifier.height(8.dp))
+
+        // Model info card
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            colors = CardDefaults.cardColors(containerColor = Color(0xFFE8F5E9))
+        ) {
+            Column(modifier = Modifier.padding(12.dp)) {
+                Text(
+                    text = if (tfLitePredictor != null) "TFLite Model: Loaded" else "TFLite Model: Failed",
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = if (tfLitePredictor != null) Color(0xFF4CAF50) else Color.Red
+                )
+                Text(
+                    text = "Input: 10 epochs (5 min) × 23 features",
+                    fontSize = 12.sp,
+                    color = Color.Gray
+                )
+                Text(
+                    text = "Deep: 83% | REM: 55% | Light: 56% | Wake: 74%",
+                    fontSize = 11.sp,
+                    color = Color.Gray
+                )
+            }
+        }
+
+        Spacer(modifier = Modifier.height(16.dp))
 
         // Demo Scenarios Card
         Card(
@@ -98,7 +139,7 @@ fun SleepWisePOCApp(
                     fontSize = 18.sp
                 )
                 Text(
-                    text = "Select a sleep stage to simulate:",
+                    text = "Simulates 5 minutes of sensor data:",
                     fontSize = 14.sp,
                     color = Color.Gray
                 )
@@ -115,10 +156,13 @@ fun SleepWisePOCApp(
                         color = Color(0xFF3F51B5),
                         modifier = Modifier.weight(1f)
                     ) {
-                        val input = sleepPredictor.generateMockInput("deep_sleep")
-                        currentInput = input
-                        predictionResult = sleepPredictor.predict(input)
-                        statusMessage = "Simulating Deep Sleep..."
+                        scope.launch {
+                            isLoading = true
+                            statusMessage = "Simulating 10 Deep sleep epochs..."
+                            predictionResult = runPrediction(tfLitePredictor, "deep")
+                            bufferStatus = "Buffer: ${tfLitePredictor?.getBufferSize() ?: 0}/10 epochs"
+                            isLoading = false
+                        }
                     }
 
                     ScenarioButton(
@@ -126,10 +170,13 @@ fun SleepWisePOCApp(
                         color = Color(0xFF2196F3),
                         modifier = Modifier.weight(1f)
                     ) {
-                        val input = sleepPredictor.generateMockInput("light_sleep")
-                        currentInput = input
-                        predictionResult = sleepPredictor.predict(input)
-                        statusMessage = "Simulating Light Sleep..."
+                        scope.launch {
+                            isLoading = true
+                            statusMessage = "Simulating 10 Light sleep epochs..."
+                            predictionResult = runPrediction(tfLitePredictor, "light")
+                            bufferStatus = "Buffer: ${tfLitePredictor?.getBufferSize() ?: 0}/10 epochs"
+                            isLoading = false
+                        }
                     }
                 }
 
@@ -144,10 +191,13 @@ fun SleepWisePOCApp(
                         color = Color(0xFF9C27B0),
                         modifier = Modifier.weight(1f)
                     ) {
-                        val input = sleepPredictor.generateMockInput("rem_sleep")
-                        currentInput = input
-                        predictionResult = sleepPredictor.predict(input)
-                        statusMessage = "Simulating REM Sleep..."
+                        scope.launch {
+                            isLoading = true
+                            statusMessage = "Simulating 10 REM sleep epochs..."
+                            predictionResult = runPrediction(tfLitePredictor, "rem")
+                            bufferStatus = "Buffer: ${tfLitePredictor?.getBufferSize() ?: 0}/10 epochs"
+                            isLoading = false
+                        }
                     }
 
                     ScenarioButton(
@@ -155,55 +205,59 @@ fun SleepWisePOCApp(
                         color = Color(0xFFFF9800),
                         modifier = Modifier.weight(1f)
                     ) {
-                        val input = sleepPredictor.generateMockInput("wake")
-                        currentInput = input
-                        predictionResult = sleepPredictor.predict(input)
-                        statusMessage = "Simulating Awake..."
+                        scope.launch {
+                            isLoading = true
+                            statusMessage = "Simulating 10 Wake epochs..."
+                            predictionResult = runPrediction(tfLitePredictor, "wake")
+                            bufferStatus = "Buffer: ${tfLitePredictor?.getBufferSize() ?: 0}/10 epochs"
+                            isLoading = false
+                        }
                     }
                 }
 
                 Spacer(modifier = Modifier.height(12.dp))
 
-                // Optimal wake scenario
+                // Mixed scenario (transition)
                 Button(
                     onClick = {
-                        val input = sleepPredictor.generateMockInput("optimal_wake")
-                        currentInput = input
-                        predictionResult = sleepPredictor.predict(input)
-                        statusMessage = "Optimal wake-up scenario!"
+                        scope.launch {
+                            isLoading = true
+                            statusMessage = "Simulating sleep transition..."
+                            predictionResult = runTransitionPrediction(tfLitePredictor)
+                            bufferStatus = "Buffer: ${tfLitePredictor?.getBufferSize() ?: 0}/10 epochs"
+                            isLoading = false
+                        }
                     },
                     modifier = Modifier.fillMaxWidth(),
                     colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF4CAF50))
                 ) {
-                    Text("Optimal Wake-Up (6 AM, Light Sleep)", fontSize = 14.sp)
+                    Text("Mixed (Deep → Light transition)", fontSize = 14.sp)
                 }
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                Text(
+                    text = bufferStatus,
+                    fontSize = 12.sp,
+                    color = Color.Gray
+                )
             }
         }
 
         Spacer(modifier = Modifier.height(16.dp))
 
-        // Input Data Display
-        currentInput?.let { input ->
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                colors = CardDefaults.cardColors(containerColor = Color(0xFFE3F2FD))
-            ) {
-                Column(modifier = Modifier.padding(16.dp)) {
-                    Text("Input Data (Simulated)", fontWeight = FontWeight.Bold)
-                    Spacer(modifier = Modifier.height(8.dp))
-
-                    Row(modifier = Modifier.fillMaxWidth()) {
-                        DataChip("HR", "${input.heartRate.toInt()} bpm", Modifier.weight(1f))
-                        DataChip("HRV", "${input.hrvRmssd.toInt()} ms", Modifier.weight(1f))
-                    }
-                    Spacer(modifier = Modifier.height(4.dp))
-                    Row(modifier = Modifier.fillMaxWidth()) {
-                        DataChip("Movement", String.format("%.2f", input.movement), Modifier.weight(1f))
-                        DataChip("Hour", "${input.hour}:00", Modifier.weight(1f))
-                    }
-                }
-            }
+        // Loading indicator
+        if (isLoading) {
+            CircularProgressIndicator(modifier = Modifier.size(32.dp))
+            Spacer(modifier = Modifier.height(8.dp))
         }
+
+        // Status message
+        Text(
+            text = statusMessage,
+            fontSize = 14.sp,
+            color = Color.Gray
+        )
 
         Spacer(modifier = Modifier.height(16.dp))
 
@@ -219,7 +273,7 @@ fun SleepWisePOCApp(
                     modifier = Modifier.padding(16.dp),
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
-                    Text("Prediction Result", fontWeight = FontWeight.Bold, fontSize = 18.sp)
+                    Text("LSTM Prediction", fontWeight = FontWeight.Bold, fontSize = 18.sp)
                     Spacer(modifier = Modifier.height(12.dp))
 
                     // Sleep Stage with color
@@ -246,6 +300,45 @@ fun SleepWisePOCApp(
                         fontSize = 16.sp,
                         color = Color.Gray
                     )
+
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    // Probability bars
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = CardDefaults.cardColors(containerColor = Color.White)
+                    ) {
+                        Column(modifier = Modifier.padding(12.dp)) {
+                            Text("Probabilities:", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                            Spacer(modifier = Modifier.height(4.dp))
+                            result.probabilities.forEach { (stage, prob) ->
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        text = stage,
+                                        fontSize = 12.sp,
+                                        modifier = Modifier.width(50.dp)
+                                    )
+                                    LinearProgressIndicator(
+                                        progress = { prob },
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .height(8.dp),
+                                        color = getSleepStageColor(stage),
+                                    )
+                                    Text(
+                                        text = "${(prob * 100).toInt()}%",
+                                        fontSize = 12.sp,
+                                        modifier = Modifier.width(40.dp),
+                                        textAlign = TextAlign.End
+                                    )
+                                }
+                                Spacer(modifier = Modifier.height(4.dp))
+                            }
+                        }
+                    }
 
                     Spacer(modifier = Modifier.height(16.dp))
 
@@ -336,12 +429,6 @@ fun SleepWisePOCApp(
                     }
                 }
             }
-        } else {
-            Text(
-                text = "Samsung Health SDK: Not available (demo mode only)",
-                fontSize = 12.sp,
-                color = Color.Gray
-            )
         }
 
         Spacer(modifier = Modifier.height(16.dp))
@@ -357,7 +444,7 @@ fun SleepWisePOCApp(
                     text = """
                     Watch → Samsung Health → SDK → App
                     ↓
-                    Local Predictor (TFLite ready)
+                    TFLite LSTM Model (156 KB)
                     ↓
                     Smart Alarm Decision
                     """.trimIndent(),
@@ -366,6 +453,57 @@ fun SleepWisePOCApp(
                 )
             }
         }
+    }
+}
+
+/**
+ * Run prediction with mock data for a given scenario
+ */
+private suspend fun runPrediction(
+    predictor: TFLiteSleepPredictor?,
+    scenario: String
+): TFLiteSleepPredictor.SleepPrediction? {
+    if (predictor == null) return null
+
+    return withContext(Dispatchers.Default) {
+        // Clear buffer and fill with new scenario data
+        predictor.clearBuffer()
+
+        // Add 10 epochs of the scenario
+        for (i in 0 until TFLiteSleepPredictor.SEQUENCE_LENGTH) {
+            val epoch = predictor.createMockEpoch(scenario, i, TFLiteSleepPredictor.SEQUENCE_LENGTH)
+            predictor.addEpoch(epoch)
+        }
+
+        // Run prediction
+        predictor.predict()
+    }
+}
+
+/**
+ * Run prediction simulating a transition from Deep to Light sleep
+ */
+private suspend fun runTransitionPrediction(
+    predictor: TFLiteSleepPredictor?
+): TFLiteSleepPredictor.SleepPrediction? {
+    if (predictor == null) return null
+
+    return withContext(Dispatchers.Default) {
+        predictor.clearBuffer()
+
+        // First 5 epochs: Deep sleep
+        for (i in 0 until 5) {
+            val epoch = predictor.createMockEpoch("deep", i, TFLiteSleepPredictor.SEQUENCE_LENGTH)
+            predictor.addEpoch(epoch)
+        }
+
+        // Last 5 epochs: Light sleep (transitioning)
+        for (i in 5 until TFLiteSleepPredictor.SEQUENCE_LENGTH) {
+            val epoch = predictor.createMockEpoch("light", i, TFLiteSleepPredictor.SEQUENCE_LENGTH)
+            predictor.addEpoch(epoch)
+        }
+
+        predictor.predict()
     }
 }
 
@@ -383,19 +521,6 @@ fun ScenarioButton(
         shape = RoundedCornerShape(8.dp)
     ) {
         Text(text, fontSize = 13.sp)
-    }
-}
-
-@Composable
-fun DataChip(label: String, value: String, modifier: Modifier = Modifier) {
-    Column(
-        modifier = modifier
-            .background(Color.White, RoundedCornerShape(8.dp))
-            .padding(8.dp),
-        horizontalAlignment = Alignment.CenterHorizontally
-    ) {
-        Text(label, fontSize = 12.sp, color = Color.Gray)
-        Text(value, fontSize = 16.sp, fontWeight = FontWeight.Bold)
     }
 }
 
