@@ -46,13 +46,24 @@ class MainActivity : ComponentActivity() {
 
         setContent {
             SleepWisePOCTheme {
+                var showDemoScreen by remember { mutableStateOf(false) }
+
                 Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
-                    SleepWisePOCApp(
-                        modifier = Modifier.padding(innerPadding),
-                        activity = this,
-                        samsungHealthManager = if (sdkInitialized) samsungHealthManager else null,
-                        tfLitePredictor = if (tfliteInitialized) tfLitePredictor else null
-                    )
+                    if (showDemoScreen) {
+                        DemoScreen(
+                            context = this,
+                            predictor = if (tfliteInitialized) tfLitePredictor else null,
+                            onBack = { showDemoScreen = false }
+                        )
+                    } else {
+                        SleepWisePOCApp(
+                            modifier = Modifier.padding(innerPadding),
+                            activity = this,
+                            samsungHealthManager = if (sdkInitialized) samsungHealthManager else null,
+                            tfLitePredictor = if (tfliteInitialized) tfLitePredictor else null,
+                            onStartDemo = { showDemoScreen = true }
+                        )
+                    }
                 }
             }
         }
@@ -69,7 +80,8 @@ fun SleepWisePOCApp(
     modifier: Modifier = Modifier,
     activity: Activity,
     samsungHealthManager: SamsungHealthManager?,
-    tfLitePredictor: TFLiteSleepPredictor?
+    tfLitePredictor: TFLiteSleepPredictor?,
+    onStartDemo: () -> Unit = {}
 ) {
     val scope = rememberCoroutineScope()
 
@@ -93,10 +105,25 @@ fun SleepWisePOCApp(
             fontWeight = FontWeight.Bold
         )
         Text(
-            text = "LSTM Neural Network Demo",
+            text = "Smart Alarm with ML",
             fontSize = 16.sp,
             color = Color.Gray
         )
+
+        Spacer(modifier = Modifier.height(12.dp))
+
+        // Demo button - prominent
+        Button(
+            onClick = onStartDemo,
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(56.dp),
+            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF4CAF50))
+        ) {
+            Text("Start Night Demo", fontSize = 18.sp, fontWeight = FontWeight.Bold)
+        }
+
+        Spacer(modifier = Modifier.height(4.dp))
 
         Spacer(modifier = Modifier.height(8.dp))
 
@@ -113,12 +140,12 @@ fun SleepWisePOCApp(
                     color = if (tfLitePredictor != null) Color(0xFF4CAF50) else Color.Red
                 )
                 Text(
-                    text = "Input: 10 epochs (5 min) × 23 features",
+                    text = "Input: 5 epochs (5 min) × 46 features",
                     fontSize = 12.sp,
                     color = Color.Gray
                 )
                 Text(
-                    text = "Deep: 83% | REM: 55% | Light: 56% | Wake: 74%",
+                    text = "Binary: Deep (N3+REM) vs Light (Wake+N1+N2)",
                     fontSize = 11.sp,
                     color = Color.Gray
                 )
@@ -139,7 +166,7 @@ fun SleepWisePOCApp(
                     fontSize = 18.sp
                 )
                 Text(
-                    text = "Simulates 5 minutes of sensor data:",
+                    text = "Binary: Deep (bad to wake) vs Light (OK to wake)",
                     fontSize = 14.sp,
                     color = Color.Gray
                 )
@@ -152,29 +179,29 @@ fun SleepWisePOCApp(
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     ScenarioButton(
-                        text = "Deep Sleep",
+                        text = "Deep (N3)",
                         color = Color(0xFF3F51B5),
                         modifier = Modifier.weight(1f)
                     ) {
                         scope.launch {
                             isLoading = true
-                            statusMessage = "Simulating 10 Deep sleep epochs..."
+                            statusMessage = "Simulating Deep sleep → expect 'Deep'"
                             predictionResult = runPrediction(tfLitePredictor, "deep")
-                            bufferStatus = "Buffer: ${tfLitePredictor?.getBufferSize() ?: 0}/10 epochs"
+                            bufferStatus = "Buffer: ${tfLitePredictor?.getBufferSize() ?: 0}/5 epochs"
                             isLoading = false
                         }
                     }
 
                     ScenarioButton(
-                        text = "Light Sleep",
-                        color = Color(0xFF2196F3),
+                        text = "REM",
+                        color = Color(0xFF9C27B0),
                         modifier = Modifier.weight(1f)
                     ) {
                         scope.launch {
                             isLoading = true
-                            statusMessage = "Simulating 10 Light sleep epochs..."
-                            predictionResult = runPrediction(tfLitePredictor, "light")
-                            bufferStatus = "Buffer: ${tfLitePredictor?.getBufferSize() ?: 0}/10 epochs"
+                            statusMessage = "Simulating REM sleep → expect 'Deep'"
+                            predictionResult = runPrediction(tfLitePredictor, "rem")
+                            bufferStatus = "Buffer: ${tfLitePredictor?.getBufferSize() ?: 0}/5 epochs"
                             isLoading = false
                         }
                     }
@@ -187,29 +214,29 @@ fun SleepWisePOCApp(
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     ScenarioButton(
-                        text = "REM Sleep",
-                        color = Color(0xFF9C27B0),
+                        text = "Light",
+                        color = Color(0xFF2196F3),
                         modifier = Modifier.weight(1f)
                     ) {
                         scope.launch {
                             isLoading = true
-                            statusMessage = "Simulating 10 REM sleep epochs..."
-                            predictionResult = runPrediction(tfLitePredictor, "rem")
-                            bufferStatus = "Buffer: ${tfLitePredictor?.getBufferSize() ?: 0}/10 epochs"
+                            statusMessage = "Simulating Light sleep → expect 'Light'"
+                            predictionResult = runPrediction(tfLitePredictor, "light")
+                            bufferStatus = "Buffer: ${tfLitePredictor?.getBufferSize() ?: 0}/5 epochs"
                             isLoading = false
                         }
                     }
 
                     ScenarioButton(
-                        text = "Awake",
+                        text = "Wake",
                         color = Color(0xFFFF9800),
                         modifier = Modifier.weight(1f)
                     ) {
                         scope.launch {
                             isLoading = true
-                            statusMessage = "Simulating 10 Wake epochs..."
+                            statusMessage = "Simulating Wake → expect 'Light'"
                             predictionResult = runPrediction(tfLitePredictor, "wake")
-                            bufferStatus = "Buffer: ${tfLitePredictor?.getBufferSize() ?: 0}/10 epochs"
+                            bufferStatus = "Buffer: ${tfLitePredictor?.getBufferSize() ?: 0}/5 epochs"
                             isLoading = false
                         }
                     }
@@ -222,16 +249,16 @@ fun SleepWisePOCApp(
                     onClick = {
                         scope.launch {
                             isLoading = true
-                            statusMessage = "Simulating sleep transition..."
+                            statusMessage = "Simulating Deep → Light transition..."
                             predictionResult = runTransitionPrediction(tfLitePredictor)
-                            bufferStatus = "Buffer: ${tfLitePredictor?.getBufferSize() ?: 0}/10 epochs"
+                            bufferStatus = "Buffer: ${tfLitePredictor?.getBufferSize() ?: 0}/5 epochs"
                             isLoading = false
                         }
                     },
                     modifier = Modifier.fillMaxWidth(),
                     colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF4CAF50))
                 ) {
-                    Text("Mixed (Deep → Light transition)", fontSize = 14.sp)
+                    Text("Transition (Deep → Light)", fontSize = 14.sp)
                 }
 
                 Spacer(modifier = Modifier.height(8.dp))
@@ -444,7 +471,9 @@ fun SleepWisePOCApp(
                     text = """
                     Watch → Samsung Health → SDK → App
                     ↓
-                    TFLite LSTM Model (156 KB)
+                    Feature Extraction (20 base + 26 temporal)
+                    ↓
+                    Binary Classifier: Deep vs Not Deep
                     ↓
                     Smart Alarm Decision
                     """.trimIndent(),
@@ -491,14 +520,14 @@ private suspend fun runTransitionPrediction(
     return withContext(Dispatchers.Default) {
         predictor.clearBuffer()
 
-        // First 5 epochs: Deep sleep
-        for (i in 0 until 5) {
+        // First 2 epochs: Deep sleep
+        for (i in 0 until 2) {
             val epoch = predictor.createMockEpoch("deep", i, TFLiteSleepPredictor.SEQUENCE_LENGTH)
             predictor.addEpoch(epoch)
         }
 
-        // Last 5 epochs: Light sleep (transitioning)
-        for (i in 5 until TFLiteSleepPredictor.SEQUENCE_LENGTH) {
+        // Last 3 epochs: Light sleep (transitioning to Not Deep)
+        for (i in 2 until TFLiteSleepPredictor.SEQUENCE_LENGTH) {
             val epoch = predictor.createMockEpoch("light", i, TFLiteSleepPredictor.SEQUENCE_LENGTH)
             predictor.addEpoch(epoch)
         }
@@ -526,9 +555,11 @@ fun ScenarioButton(
 
 fun getSleepStageColor(stage: String): Color {
     return when (stage) {
+        "Deep" -> Color(0xFF3F51B5)      // Bad to wake - blue/purple
+        "Light" -> Color(0xFF4CAF50)     // OK to wake - green
+        // Legacy 4-class colors for backward compatibility
         "Wake" -> Color(0xFFFF9800)
         "Light" -> Color(0xFF2196F3)
-        "Deep" -> Color(0xFF3F51B5)
         "REM" -> Color(0xFF9C27B0)
         else -> Color.Gray
     }
