@@ -90,6 +90,7 @@ fun SleepWisePOCApp(
     var isLoading by remember { mutableStateOf(false) }
     var bufferStatus by remember { mutableStateOf("Buffer: 0/10 epochs") }
     var realHealthData by remember { mutableStateOf("") }
+    var realDataPrediction by remember { mutableStateOf("") }
 
     Column(
         modifier = modifier
@@ -448,11 +449,100 @@ fun SleepWisePOCApp(
                         ) {
                             Text("Load Data", fontSize = 12.sp)
                         }
+
+                        Button(
+                            onClick = {
+                                scope.launch {
+                                    realHealthData = samsungHealthManager.exportDataToCSV(hoursBack = 24)
+                                }
+                            },
+                            modifier = Modifier.weight(1f),
+                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF9C27B0))
+                        ) {
+                            Text("Export CSV", fontSize = 12.sp)
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    // Predict from Real Data button
+                    Button(
+                        onClick = {
+                            scope.launch {
+                                realDataPrediction = "Loading real data..."
+                                try {
+                                    val epochs = samsungHealthManager.processDataIntoEpochs(hoursBack = 1)
+                                    if (epochs.isEmpty()) {
+                                        realDataPrediction = "No epochs available. Need more HR data."
+                                    } else if (epochs.size < 5) {
+                                        realDataPrediction = "Need at least 5 epochs, got ${epochs.size}. Measure HR more frequently."
+                                    } else if (tfLitePredictor == null) {
+                                        realDataPrediction = "Model not loaded"
+                                    } else {
+                                        // Clear predictor buffer
+                                        tfLitePredictor.clearBuffer()
+
+                                        // Add last 5 epochs to predictor
+                                        val lastEpochs = epochs.takeLast(5)
+                                        val results = StringBuilder()
+                                        results.append("=== REAL DATA PREDICTION ===\n\n")
+                                        results.append("Using ${lastEpochs.size} epochs from your watch:\n\n")
+
+                                        lastEpochs.forEachIndexed { idx, epoch ->
+                                            val features = samsungHealthManager.epochToFeatures(epoch)
+                                            tfLitePredictor.addEpoch(features)
+                                            results.append("${idx+1}. ${epoch.timeString}\n")
+                                            results.append("   HR: ${epoch.hrMean.toInt()} bpm (${epoch.hrSampleCount} samples)\n")
+                                        }
+
+                                        // Run prediction
+                                        val prediction = tfLitePredictor.predict()
+                                        if (prediction != null) {
+                                            results.append("\n--- PREDICTION RESULT ---\n")
+                                            results.append("Stage: ${prediction.sleepStage}\n")
+                                            results.append("Raw Deep: ${(prediction.rawDeepProb * 100).toInt()}%\n")
+                                            results.append("EMA Deep: ${(prediction.emaDeepProb * 100).toInt()}%\n")
+                                            results.append("Stable: ${if (prediction.isStable) "YES" else "NO (${prediction.consecutiveCount}/3)"}\n")
+                                            results.append("\nRecommendation: ")
+                                            results.append(if (prediction.sleepStage == "Light" && prediction.isStable) {
+                                                "Good time to wake up!"
+                                            } else {
+                                                "Stay asleep - deep sleep detected"
+                                            })
+                                        } else {
+                                            results.append("\nPrediction failed")
+                                        }
+
+                                        realDataPrediction = results.toString()
+                                    }
+                                } catch (e: Exception) {
+                                    realDataPrediction = "Error: ${e.message}"
+                                }
+                            }
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF4CAF50))
+                    ) {
+                        Text("Predict from Real Watch Data", fontSize = 14.sp)
                     }
 
                     if (realHealthData.isNotEmpty()) {
                         Spacer(modifier = Modifier.height(8.dp))
                         Text(realHealthData, fontSize = 11.sp)
+                    }
+
+                    if (realDataPrediction.isNotEmpty()) {
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Card(
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = CardDefaults.cardColors(containerColor = Color(0xFFE8F5E9))
+                        ) {
+                            Text(
+                                realDataPrediction,
+                                fontSize = 12.sp,
+                                modifier = Modifier.padding(12.dp)
+                            )
+                        }
                     }
                 }
             }
